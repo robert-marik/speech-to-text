@@ -1,4 +1,6 @@
 import os
+os.environ['PYSTRAY_BACKEND'] = 'gtk'
+import os
 import time
 import threading
 import subprocess

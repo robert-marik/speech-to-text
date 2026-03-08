@@ -3,3 +3,8 @@ numpy
 scipy
 pystray
 Pillow
+pygobject
+python-sounddevice
+pyinput
+pygobject 
+gtk3
