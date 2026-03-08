@@ -10,6 +10,7 @@ from groq import Groq
 from PIL import Image, ImageDraw
 import pystray
 from pystray import MenuItem as item
+import subprocess
 
 # --- KONFIGURACE ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -34,8 +35,8 @@ class VoiceAppTray:
         print(f"[{timestamp}] {message}")
 
     def create_image(self, color):
-        """Vytvoří ikonku pro stavovou lištu (kruh v barvě)."""
-        image = Image.new('RGB', (64, 64), color=(255, 255, 255))
+        """Vytvoří ikonku pro stavovou lištu (kruh)."""
+        image = Image.new('RGB', (64, 64))
         d = ImageDraw.Draw(image)
         d.ellipse((5, 5, 59, 59), fill=color)
         return image
@@ -89,10 +90,13 @@ class VoiceAppTray:
         self.audio_data = []
         try:
             # Nahrávání
+            subprocess.run(["aplay", "-q", "start.wav"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             with sd.InputStream(samplerate=self.fs, channels=1, callback=lambda indata, f, t, s: self.audio_data.append(indata.copy()) if self.recording else None):
                 while self.recording:
                     time.sleep(0.1)
             
+            subprocess.run(["aplay", "-q", "stop.wav"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
             if self.audio_data:
                 # Změna ikonky na "zpracovávám" (žlutá)
                 self.icon.icon = self.create_image("yellow")
