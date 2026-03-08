@@ -27,7 +27,7 @@ class VoiceAppTray:
         self.audio_data = []
         self.last_ctrl_time = 0
         self.language = "cs"  # Výchozí jazyk
-        self.fs = 44100
+        self.fs = 16000
         self.icon = None
         self.running = True
 
@@ -35,6 +35,12 @@ class VoiceAppTray:
         """Vypíše zprávu do terminálu s časovou značkou."""
         timestamp = time.strftime("%H:%M:%S")
         print(f"[{timestamp}] {message}")
+
+    def set_sample_rate(self, rate):
+        def inner():
+            self.fs = rate
+            self.log(f"Vzorkovací frekvence změněna na: {rate} Hz")
+        return inner        
 
     def create_image(self, color):
         """Vytvoří ikonku pro stavovou lištu (kruh)."""
@@ -152,6 +158,9 @@ class VoiceAppTray:
             item('English', self.set_language('en'), checked=lambda item: self.language == 'en'),
             item('Deutsch', self.set_language('de'), checked=lambda item: self.language == 'de'),
             pystray.Menu.SEPARATOR,
+            item('Kvalita: 16kHz (Rychlejší)', self.set_sample_rate(16000), checked=lambda item: self.fs == 16000),
+            item('Kvalita: 44.1kHz (Věrnější)', self.set_sample_rate(44100), checked=lambda item: self.fs == 44100),
+            pystray.Menu.SEPARATOR,            
             item('Ukončit', self.quit_app)
         )
 
