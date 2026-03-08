@@ -6,8 +6,6 @@ import threading
 import subprocess
 import numpy as np
 import scipy.io.wavfile as wav
-# import sounddevice as sd
-import soundcard as sc
 from pynput import keyboard
 from groq import Groq
 from PIL import Image, ImageDraw
@@ -44,6 +42,8 @@ class VoiceAppTray:
         self.last_corrected_text = ""
         # Pro sledování stavu hudby
         self.was_playing = False
+        # Výchozí metoda záznamu - můžete přepínat mezi 'sounddevice' a 'soundcard'
+        self.record_method = 'sounddevice'
 
     def log(self, message):
         """Vypíše zprávu do terminálu a uloží ji do logu s časovou značkou."""
@@ -56,8 +56,15 @@ class VoiceAppTray:
     def set_sample_rate(self, rate):
         def inner():
             self.fs = rate
-            self.log(f"Vzorkovací frekvence změněna na: {rate} Hz")
+            self.log(f"Vzorkovací frekvence změněna na {rate} Hz")
         return inner        
+
+    def set_record_method(self, method):
+        def inner():
+            self.record_method = method
+            self.log(f"Metoda záznamu zvuku změněna na {method}.")
+        return inner        
+
 
     def toggle_correction(self):
         self.use_correction = not self.use_correction
@@ -149,6 +156,61 @@ class VoiceAppTray:
         except Exception as e:
             self.log(f"CHYBA při vkládání: {e}")
 
+    def record_with_sounddevice(self):
+        """Záznam přes sounddevice (mikrofon)."""
+        import sounddevice as sd
+        self.log("Zahajuji záznam přes sounddevice...")
+        self.audio_data = []
+        with sd.InputStream(samplerate=self.fs, channels=1, callback=self._audio_callback):
+            while self.recording:
+                time.sleep(0.1)
+        return np.concatenate(self.audio_data, axis=0)
+
+    def _audio_callback(self, indata, frames, time_info, status):
+        """Callback funkce pro sounddevice, která ukládá nahraná data."""
+        if self.recording:
+            self.audio_data.append(indata.copy())
+
+    def record_with_soundcard(self):
+        """Záznam přes knihovnu soundcard (vhodné pro loopback/systémový zvuk)."""
+        import soundcard as sc
+        # Zde definujete mikrofon nebo loopback zařízení
+        mic = sc.default_microphone()
+        self.log(f"Zahajuji záznam přes soundcard a mikrofon {mic.name}...")
+        frame_size = self.fs // 50
+        with mic.recorder(samplerate=self.fs) as recorder:
+            while self.recording:
+                data = recorder.record(numframes=frame_size)
+                self.audio_data.append(data)
+        return np.concatenate(self.audio_data, axis=0)
+
+    def perform_recording(self):
+        if self.record_method == 'sounddevice':
+            return self.record_with_sounddevice()
+        else:
+            return self.record_with_soundcard()
+
+    def save_audio(self, raw_data, filename):
+        """
+        Sjednotí různá datová pole a uloží je jako WAV.
+        raw_data: List nebo numpy pole z nahrávání.
+        """
+        # 1. Převedení na numpy pole (pokud to ještě není)
+        audio_array = np.concatenate(raw_data, axis=0) if isinstance(raw_data, list) else raw_data
+        
+        # 2. Normalizace (pokud soundcard vrací float mimo rozsah)
+        # Soundcard obvykle vrací float v rozsahu [-1, 1], což wav.write (float) akceptuje.
+        # Pokud chcete jistotu, převedeme na int16, což je nejkompatibilnější formát:
+        
+        if audio_array.dtype != np.int16:
+            # Převedení na int16 (standard pro 16bitové WAV)
+            # Předpokládáme, že vstupní data jsou float v rozsahu [-1, 1]
+            audio_array = (audio_array * 32767).astype(np.int16)
+
+        # 3. Zápis
+        wav.write(filename, self.fs, audio_array)
+        self.log(f"Audio uloženo do {filename} ve formátu {audio_array.dtype}")
+
     def record_and_process(self):
         """Pracovní vlákno pro záznam a AI zpracování."""
         self.audio_data = []
@@ -156,20 +218,9 @@ class VoiceAppTray:
             # Nahrávání
             subprocess.run(["aplay", "-q", "start.wav"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             try:
-                # Použijeme výchozí mikrofon, který je v systému aktivní
-                mic = sc.default_microphone()
-                self.log(f"Používám mikrofon: {mic.name}")
-                
-                with mic.recorder(samplerate=16000, channels=1) as recorder:
-                    while self.recording:
-                        # Načteme blok dat o délce 1024 snímků
-                        # (tato metoda je v soundcard blokující a plynulá)
-                        data = recorder.record(numframes=1024)
-                        self.audio_data.append(data)
-                        
+                self.perform_recording()                        
             except Exception as e:
                 self.log(f"CHYBA v procesu: {e}")
-            
             subprocess.run(["aplay", "-q", "stop.wav"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
             if self.audio_data:
@@ -178,8 +229,7 @@ class VoiceAppTray:
                 self.log("Zpracovávám zvuk přes Groq AI...")
                 
                 # Uložení do WAV
-                recorded_chunk = np.concatenate(self.audio_data, axis=0)
-                wav.write(self.audio_path, self.fs, recorded_chunk)
+                self.save_audio(self.audio_data, self.audio_path)
                 
                 # Groq Whisper API
                 with open(self.audio_path, "rb") as file:
@@ -250,6 +300,10 @@ class VoiceAppTray:
             pystray.Menu.SEPARATOR,
             item('Kvalita: 16kHz (Rychlejší)', self.set_sample_rate(16000), checked=lambda item: self.fs == 16000),
             item('Kvalita: 44.1kHz (Věrnější)', self.set_sample_rate(44100), checked=lambda item: self.fs == 44100),
+            pystray.Menu.SEPARATOR,
+            item('Metoda záznamu', lambda: None, enabled=False),
+            item('sounddevice', self.set_record_method('sounddevice'), checked=lambda item: self.record_method == 'sounddevice'),
+            item('soundcard', self.set_record_method('soundcard'), checked=lambda item: self.record_method == 'soundcard'),
             pystray.Menu.SEPARATOR,
             item('Zobrazit poslední texty', self.show_last_texts),
             item('Otevřít logy', self.open_logs),            

@@ -8,3 +8,4 @@ python-sounddevice
 pyinput
 pygobject 
 gtk3
+pysoundcard

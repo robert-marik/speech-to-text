@@ -12,7 +12,6 @@ Nainstalujte potřebné knihovny podle vašeho manažera prostředí, napříkla
 
 ```
 mamba install --file requirements.txt
-pip install soundcard
 ```
 
 ## Spuštění
