@@ -26,8 +26,9 @@ class VoiceAppTray:
         self.recording = False
         self.audio_data = []
         self.last_ctrl_time = 0
-        self.language = "cs"  # Výchozí jazyk
-        self.fs = 16000
+        self.language = "cs"
+        self.fs = 16000  # Výchozí frekvence 16kHz pro rychlost
+        self.use_correction = True  # Oprava pravopisu zapnuta v základu
         self.icon = None
         self.running = True
 
@@ -41,6 +42,10 @@ class VoiceAppTray:
             self.fs = rate
             self.log(f"Vzorkovací frekvence změněna na: {rate} Hz")
         return inner        
+
+    def toggle_correction(self):
+        self.use_correction = not self.use_correction
+        self.log(f"AI oprava pravopisu: {'ZAPNUTA' if self.use_correction else 'VYPNUTA'}")
 
     def create_image(self, color):
         """Vytvoří ikonku pro stavovou lištu (kruh)."""
@@ -62,6 +67,23 @@ class VoiceAppTray:
             self.icon.stop()
         os._exit(0)
 
+    def correct_text(self, raw_text):
+        """Druhý průchod přes LLM pro opravu pravopisu a čárek."""
+        try:
+            self.log("Provádím AI korekci textu...")
+            completion = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {"role": "system", "content": "Jsi expert na český pravopis. Oprav text: doplň čárky, oprav překlepy a skloňování. Neměň význam, jen oprav chyby. Vrať POUZE opravený text bez úvodních řečí."},
+                    {"role": "user", "content": raw_text}
+                ]
+            )
+            final_text = completion.choices[0].message.content.strip()
+            return final_text
+        except Exception as e:
+            self.log(f"Chyba při korekci: {e}")
+            return raw_text
+
     def toggle_music(self, pause=True):
         """Ztlumí/pustí hudbu pomocí playerctl."""
         try:
@@ -76,7 +98,7 @@ class VoiceAppTray:
 
     def robust_paste(self, text):
         """Spolehlivě vloží text do schránky a pak na pozici kurzoru."""
-        self.log(f"Získán přepis: {text}")
+        self.log(f"Vkládám: {text}")
         
         try:
             # 1. Vložení do schránky přes xclip
@@ -123,8 +145,15 @@ class VoiceAppTray:
                         response_format="text"
                     )
                 
-                if transcription.strip():
-                    self.robust_paste(transcription.strip())
+                text = transcription.strip()
+                self.log(f"Získán přepis: {text}")
+
+                if text:
+                    # 2. KROK: Volitelná korekce (Llama)
+                    if self.use_correction:
+                        text = self.correct_text(text)
+                    self.log(f"Finální text po korektuře: {text}")                    
+                    self.robust_paste(text)
                 else:
                     self.log("AI nevrátila žádný text (ticho?).")
         except Exception as e:
@@ -154,9 +183,10 @@ class VoiceAppTray:
         menu = pystray.Menu(
             item('Hlasový přepis (2x CTRL)', lambda: None, enabled=False),
             pystray.Menu.SEPARATOR,
-            item('Čeština', self.set_language('cs'), checked=lambda item: self.language == 'cs'),
+            item('Opravovat pravopis (AI)', self.toggle_correction, checked=lambda item: self.use_correction),
+            pystray.Menu.SEPARATOR,            
+	    item('Čeština', self.set_language('cs'), checked=lambda item: self.language == 'cs'),
             item('English', self.set_language('en'), checked=lambda item: self.language == 'en'),
-            item('Deutsch', self.set_language('de'), checked=lambda item: self.language == 'de'),
             pystray.Menu.SEPARATOR,
             item('Kvalita: 16kHz (Rychlejší)', self.set_sample_rate(16000), checked=lambda item: self.fs == 16000),
             item('Kvalita: 44.1kHz (Věrnější)', self.set_sample_rate(44100), checked=lambda item: self.fs == 44100),
@@ -178,7 +208,7 @@ class VoiceAppTray:
 
 if __name__ == "__main__":
     if not os.environ.get("GROQ_API_KEY"):
-        print("❌ CHYBA: Musíš nastavit proměnnou prostředí GROQ_API_KEY!")
+        print("❌ CHYBA: Chybí GROQ_API_KEY v prostředí!")
     else:
         app = VoiceAppTray()
         app.run()
