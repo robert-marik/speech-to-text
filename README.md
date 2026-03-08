@@ -6,6 +6,15 @@ Program pro konverzi mluveného slova na text.
 
 Program čeká na dvojí stisknutí klávesy Ctrl a poté nahraje vstup z mikrofonu (ukončeno dvojím stisknutím klávesy Ctrl), odešle na rozpoznávání mluvené řeči a na místo kurzoru do libovolné aplikace vloží rozpoznaný text. Během nahrávání se pauznou přehrávače hudby.
 
+## Instalace
+
+Nainstalujte potřebné knihovny podle vašeho manažera prostředí, například takto.
+
+```
+mamba install --file requirements.txt
+pip install soundcard
+```
+
 ## Spuštění
 
 Je potřeba nainstalovat závislosti a potom spustit následující příkaz. Předpokládá se, že v souboru `api.txt` je přislušný api klíč.

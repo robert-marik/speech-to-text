@@ -6,17 +6,14 @@ import threading
 import subprocess
 import numpy as np
 import scipy.io.wavfile as wav
-import sounddevice as sd
+# import sounddevice as sd
+import soundcard as sc
 from pynput import keyboard
 from groq import Groq
 from PIL import Image, ImageDraw
 import pystray
 from pystray import MenuItem as item
 import subprocess
-
-# --- KONFIGURACE ---
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-FILENAME = os.path.join(BASE_DIR, "input_audio.wav")
 
 # Groq klient - bere API klíč z proměnné prostředí GROQ_API_KEY
 client = Groq()
@@ -31,11 +28,30 @@ class VoiceAppTray:
         self.use_correction = True  # Oprava pravopisu zapnuta v základu
         self.icon = None
         self.running = True
+        # Definice systémové cesty pro logy (Linux standard)
+        home = os.path.expanduser("~")
+        self.app_data_dir = os.path.join(home, ".local", "state", "voice_to_text")
+        # Vytvoření složky, pokud neexistuje
+        os.makedirs(self.app_data_dir, exist_ok=True)
+        # Cesty pro log a poslední přepis
+        self.log_path = os.path.join(self.app_data_dir, "app.log")
+        self.report_path = os.path.join(self.app_data_dir, "last_transcription.txt")
+        # Audio soubor můžeme nechat v /tmp, aby se po restartu smazal (volitelné)
+        random_number = np.random.randint(1000, 9999)
+        self.audio_path = f"/tmp/voice_input_{random_number}.wav"
+        # Pro ukládání posledních přepisů pro zobrazení v reportu
+        self.last_raw_text = ""
+        self.last_corrected_text = ""
+        # Pro sledování stavu hudby
+        self.was_playing = False
 
     def log(self, message):
-        """Vypíše zprávu do terminálu s časovou značkou."""
+        """Vypíše zprávu do terminálu a uloží ji do logu s časovou značkou."""
         timestamp = time.strftime("%H:%M:%S")
-        print(f"[{timestamp}] {message}")
+        log_entry = f"[{timestamp}] {message}"
+        print(log_entry)
+        with open(self.log_path, "a", encoding="utf-8") as f:
+            f.write(log_entry + "\n")
 
     def set_sample_rate(self, rate):
         def inner():
@@ -71,10 +87,14 @@ class VoiceAppTray:
         """Druhý průchod přes LLM pro opravu pravopisu a čárek."""
         try:
             self.log("Provádím AI korekci textu...")
+            if self.language == "cs":
+                system_prompt = "Jsi expert na český pravopis. Oprav text: doplň čárky, oprav překlepy a skloňování. Neměň význam, jen oprav chyby. Vrať POUZE opravený text bez úvodních řečí."
+            else:
+                system_prompt = "You are an expert in English grammar and spelling. Correct the text: add commas, fix typos and grammar. Do not change the meaning, just correct the errors. Return ONLY the corrected text without any introductory speech."
             completion = client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
                 messages=[
-                    {"role": "system", "content": "Jsi expert na český pravopis. Oprav text: doplň čárky, oprav překlepy a skloňování. Neměň význam, jen oprav chyby. Vrať POUZE opravený text bez úvodních řečí."},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": raw_text}
                 ]
             )
@@ -88,13 +108,27 @@ class VoiceAppTray:
         """Ztlumí/pustí hudbu pomocí playerctl."""
         try:
             if pause:
-                self.log("Pozastavuji hudbu...")
-                subprocess.run(["playerctl", "pause"], stderr=subprocess.DEVNULL)
+                self.log("Testuji, jestli hraje hudba...")
+                result = subprocess.run(
+                    ["playerctl", "status"], 
+                    stdout=subprocess.PIPE, 
+                    stderr=subprocess.DEVNULL, 
+                    text=True
+                )                
+                status = result.stdout.strip()                
+                if status == "Playing":          
+                    self.log("Pozastavuji hudbu...")
+                    subprocess.run(["playerctl", "pause"], stderr=subprocess.DEVNULL)
+                    return True
+                else:
+                    self.log("Hudba nehrála, není třeba pozastavovat.")
+                    return False
             else:
                 self.log("Spouštím hudbu...")
                 subprocess.run(["playerctl", "play"], stderr=subprocess.DEVNULL)
-        except:
-            pass
+        except Exception as e:
+            self.log(f"Chyba při ovládání hudby: {e}")
+            return False
 
     def robust_paste(self, text):
         """Spolehlivě vloží text do schránky a pak na pozici kurzoru."""
@@ -121,9 +155,20 @@ class VoiceAppTray:
         try:
             # Nahrávání
             subprocess.run(["aplay", "-q", "start.wav"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            with sd.InputStream(samplerate=self.fs, channels=1, callback=lambda indata, f, t, s: self.audio_data.append(indata.copy()) if self.recording else None):
-                while self.recording:
-                    time.sleep(0.1)
+            try:
+                # Použijeme výchozí mikrofon, který je v systému aktivní
+                mic = sc.default_microphone()
+                self.log(f"Používám mikrofon: {mic.name}")
+                
+                with mic.recorder(samplerate=16000, channels=1) as recorder:
+                    while self.recording:
+                        # Načteme blok dat o délce 1024 snímků
+                        # (tato metoda je v soundcard blokující a plynulá)
+                        data = recorder.record(numframes=1024)
+                        self.audio_data.append(data)
+                        
+            except Exception as e:
+                self.log(f"CHYBA v procesu: {e}")
             
             subprocess.run(["aplay", "-q", "stop.wav"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
@@ -134,32 +179,46 @@ class VoiceAppTray:
                 
                 # Uložení do WAV
                 recorded_chunk = np.concatenate(self.audio_data, axis=0)
-                wav.write(FILENAME, self.fs, recorded_chunk)
+                wav.write(self.audio_path, self.fs, recorded_chunk)
                 
                 # Groq Whisper API
-                with open(FILENAME, "rb") as file:
+                with open(self.audio_path, "rb") as file:
                     transcription = client.audio.transcriptions.create(
-                        file=(FILENAME, file.read()),
+                        file=(self.audio_path, file.read()),
                         model="whisper-large-v3-turbo",
                         language=self.language,
                         response_format="text"
                     )
                 
-                text = transcription.strip()
-                self.log(f"Získán přepis: {text}")
+                self.last_raw_text = transcription.strip()
+                self.log(f"Získán přepis: {self.last_raw_text}")
+                self.last_corrected_text = "" # Reset
 
-                if text:
+                if self.last_raw_text:
+                    text_to_paste = self.last_raw_text
                     # 2. KROK: Volitelná korekce (Llama)
                     if self.use_correction:
-                        text = self.correct_text(text)
-                    self.log(f"Finální text po korektuře: {text}")                    
-                    self.robust_paste(text)
+                        self.last_corrected_text = self.correct_text(self.last_raw_text)
+                        text_to_paste = self.last_corrected_text
+                        self.log(f"Finální text po korektuře: {self.last_corrected_text}")                    
+                    self.robust_paste(text_to_paste)
                 else:
                     self.log("AI nevrátila žádný text (ticho?).")
         except Exception as e:
             self.log(f"CHYBA v procesu: {e}")
         finally:
             self.icon.icon = self.create_image("blue") # Zpět do klidu
+
+    def open_logs(self):
+        """Otevře systémový log v editoru."""
+        if os.path.exists(self.log_path):
+            subprocess.run(["xdg-open", self.log_path])
+
+    def show_last_texts(self):
+        """Uloží report do systémové složky a otevře ho."""
+        with open(self.report_path, "w", encoding="utf-8") as f:
+            f.write(f"PŮVODNÍ:\n{self.last_raw_text}\n\nOPRAVENÝ:\n{self.last_corrected_text}")
+        subprocess.run(["xdg-open", self.report_path])            
 
     def on_press(self, key):
         """Detekce dvojitého stisku CTRL."""
@@ -170,12 +229,13 @@ class VoiceAppTray:
                     self.log("START nahrávání...")
                     self.recording = True
                     self.icon.icon = self.create_image("red")
-                    self.toggle_music(True)
+                    self.was_playing = self.toggle_music(pause=True)
                     threading.Thread(target=self.record_and_process).start()
                 else:
                     self.log("STOP nahrávání...")
                     self.recording = False
-                    self.toggle_music(False)
+                    if self.was_playing:
+                        self.toggle_music(pause=False)
             self.last_ctrl_time = now
 
     def run(self):
@@ -185,11 +245,14 @@ class VoiceAppTray:
             pystray.Menu.SEPARATOR,
             item('Opravovat pravopis (AI)', self.toggle_correction, checked=lambda item: self.use_correction),
             pystray.Menu.SEPARATOR,            
-	    item('Čeština', self.set_language('cs'), checked=lambda item: self.language == 'cs'),
+	        item('Čeština', self.set_language('cs'), checked=lambda item: self.language == 'cs'),
             item('English', self.set_language('en'), checked=lambda item: self.language == 'en'),
             pystray.Menu.SEPARATOR,
             item('Kvalita: 16kHz (Rychlejší)', self.set_sample_rate(16000), checked=lambda item: self.fs == 16000),
             item('Kvalita: 44.1kHz (Věrnější)', self.set_sample_rate(44100), checked=lambda item: self.fs == 44100),
+            pystray.Menu.SEPARATOR,
+            item('Zobrazit poslední texty', self.show_last_texts),
+            item('Otevřít logy', self.open_logs),            
             pystray.Menu.SEPARATOR,            
             item('Ukončit', self.quit_app)
         )
