@@ -2,9 +2,13 @@
 
 ## Popis
 
-Program pro konverzi mluveného slova na text. 
+Program pro konverzi mluveného slova na text. Volitelně je možný překlad do
+angličtiny, nebo korektury textu.
 
-Program čeká na dvojí stisknutí klávesy Ctrl a poté nahraje vstup z mikrofonu (ukončeno dvojím stisknutím klávesy Ctrl), odešle na rozpoznávání mluvené řeči a na místo kurzoru do libovolné aplikace vloží rozpoznaný text. Během nahrávání se zastaví přehrávač hudby.
+Program čeká na dvojí stisknutí klávesy Ctrl a poté nahraje vstup z mikrofonu
+(ukončeno dvojím stisknutím klávesy Ctrl), odešle na rozpoznávání mluvené řeči a
+na místo kurzoru do libovolné aplikace vloží rozpoznaný text. Během nahrávání se
+zastaví přehrávač hudby.
 
 ## Instalace
 
@@ -14,13 +18,11 @@ Nainstalujte potřebné knihovny podle vašeho manažera prostředí, napříkla
 mamba install --file requirements.txt
 ```
 
-Pokud chcete ovládat přehrávač hudby, nainstalujte i příslušný program.
+Pro ovládání přehrávače, a nahrávání a přehrávání textů nainstalujte následující programy.
 
 ```
-sudo apt-get install playerctl
+sudo apt-get install playerctl ffmpeg aplay arecord xclip xdotool
 ```
-
-Pokus s nahráváním zvuku, jak to bude se hlasitostí,Pokus s zahráváním zvuků, jak to bude s hlasitostí a tak vůbec, bude muset být proveden.
 
 
 ## Spuštění

@@ -42,6 +42,7 @@ class VoiceAppTray:
         self.last_corrected_text = ""
         # Pro sledování stavu hudby
         self.was_playing = False
+        self.translate_to_english = False
 
     def log(self, message):
         """Vypíše zprávu do terminálu a uloží ji do logu s časovou značkou."""
@@ -60,6 +61,10 @@ class VoiceAppTray:
     def toggle_correction(self):
         self.use_correction = not self.use_correction
         self.log(f"AI oprava pravopisu: {'ZAPNUTA' if self.use_correction else 'VYPNUTA'}")
+
+    def toggle_translation(self):
+        self.translate_to_english = not self.translate_to_english
+        self.log(f"Překlad do angličtiny: {'ZAPNUT' if self.translate_to_english else 'VYPNUT'}")
 
     def create_image(self, color):
         """Vytvoří ikonku pro stavovou lištu (kruh)."""
@@ -101,6 +106,24 @@ class VoiceAppTray:
         except Exception as e:
             self.log(f"Chyba při korekci: {e}")
             return raw_text
+
+    def translate_text(self, text):
+        """Přeloží text do angličtiny pomocí LLM."""
+        try:
+            self.log("Provádím překlad do angličtiny...")
+            system_prompt = "You are a professional translator. Translate the following text to English while preserving the meaning. Return ONLY the translated text without any introductory speech."
+            completion = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": text}
+                ]
+            )
+            final_text = completion.choices[0].message.content.strip()
+            return final_text
+        except Exception as e:
+            self.log(f"Chyba při překladu: {e}")
+            return text
 
     def toggle_music(self, pause=True):
         """Ztlumí/pustí hudbu pomocí playerctl."""
@@ -206,6 +229,12 @@ class VoiceAppTray:
                         correction_start = time.time()
                         text_to_paste = self.correct_text(self.last_raw_text)
                         self.log(f"Korekce dokončena za {time.time() - correction_start:.2f} sekund.")
+                        self.log(f"Text po korekci: {text_to_paste}")
+                    if self.translate_to_english:
+                        translation_start = time.time()
+                        text_to_paste = self.translate_text(text_to_paste)
+                        self.log(f"Překlad dokončen za {time.time() - translation_start:.2f} sekund.")    
+                        self.log(f"Text po překladu: {text_to_paste}")
                     self.robust_paste(text_to_paste)
                 self.last_corrected_text = text_to_paste
                 
@@ -246,11 +275,12 @@ class VoiceAppTray:
         # Menu pro ikonku
         menu = pystray.Menu(
             item('Hlasový přepis (2x CTRL)', lambda: None, enabled=False),
-            pystray.Menu.SEPARATOR,
-            item('Opravovat pravopis (AI)', self.toggle_correction, checked=lambda item: self.use_correction),
             pystray.Menu.SEPARATOR,            
 	        item('Čeština', self.set_language('cs'), checked=lambda item: self.language == 'cs'),
             item('English', self.set_language('en'), checked=lambda item: self.language == 'en'),
+            pystray.Menu.SEPARATOR,            
+            item('Opravovat pravopis (AI)', self.toggle_correction, checked=lambda item: self.use_correction),
+            item('Překlad do angličtiny (AI)', self.toggle_translation, checked=lambda item: self.translate_to_english),
             pystray.Menu.SEPARATOR,
             item('Kvalita: 16kHz (Rychlejší)', self.set_sample_rate(16000), checked=lambda item: self.fs == 16000),
             item('Kvalita: 44.1kHz (Věrnější)', self.set_sample_rate(44100), checked=lambda item: self.fs == 44100),
@@ -274,8 +304,15 @@ class VoiceAppTray:
         self.icon.run()
 
 if __name__ == "__main__":
+    import shutil
+    # test that aplay and arecord are available
+    for cmd in ["aplay", "arecord", "ffmpeg", "xclip", "xdotool", "playerctl"]:
+        if not shutil.which(cmd):
+            print(f"❌ CHYBA: Nástroj '{cmd}' není v systému dostupný! Ujistěte se, že je nainstalován a v PATH.")
+            exit(1)
     if not os.environ.get("GROQ_API_KEY"):
         print("❌ CHYBA: Chybí GROQ_API_KEY v prostředí!")
     else:
         app = VoiceAppTray()
         app.run()
+
