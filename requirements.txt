@@ -1,6 +1,5 @@
 groq
 numpy
-scipy
 pystray
 Pillow
 pygobject
