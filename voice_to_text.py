@@ -269,6 +269,8 @@ class VoiceAppTray:
                     threading.Thread(target=self.record_and_process).start()
                 else:
                     self.recording = False # To zastaví arecord ve vlákně výše
+                    if self.was_playing:
+                        self.toggle_music(pause=False)
             self.last_ctrl_time = now
 
     def run(self):
