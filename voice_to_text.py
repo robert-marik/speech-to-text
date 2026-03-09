@@ -16,6 +16,8 @@ import subprocess
 # Groq klient - bere API klíč z proměnné prostředí GROQ_API_KEY
 client = Groq()
 
+MAX_RECORDING_SECONDS = 120  # Maximální délka nahrávání v sekundách
+
 class VoiceAppTray:
     def __init__(self):
         self.recording = False
@@ -26,6 +28,7 @@ class VoiceAppTray:
         self.use_correction = True  # Oprava pravopisu zapnuta v základu
         self.icon = None
         self.running = True
+        self.recording_process = None
         # Definice systémové cesty pro logy (Linux standard)
         home = os.path.expanduser("~")
         self.app_data_dir = os.path.join(home, ".local", "state", "voice_to_text")
@@ -172,6 +175,8 @@ class VoiceAppTray:
 
     def record_and_process(self):
         """Vlákno, které teď jen čeká na externí procesy."""
+        text_to_paste = ""
+        normalized_path = self.audio_path.replace(".wav", "_norm.opus")
         try:
             # 1. Zvuková signalizace startu
             subprocess.run(["aplay", "-q", "start.wav"], stderr=subprocess.DEVNULL)
@@ -183,8 +188,15 @@ class VoiceAppTray:
             self.log(f"Externí nahrávání spuštěno (PID: {self.recording_process.pid})")
 
             # Čekáme, dokud uživatel nahrávání nevypne (recording = False)
+            start_time = time.time()
             while self.recording:
                 time.sleep(0.1)
+                if time.time() - start_time >= MAX_RECORDING_SECONDS:
+                    self.log(f"⚠️ Timeout: nahrávání automaticky ukončeno po {MAX_RECORDING_SECONDS}s.")
+                    self.recording = False
+                    if self.was_playing:
+                        self.toggle_music(pause=False)
+                    break
 
             # 3. UKONČENÍ nahrávání
             if self.recording_process:
@@ -198,12 +210,11 @@ class VoiceAppTray:
             # 4. EXTERNÍ NORMALIZACE (Zesílení) přes ffmpeg
             postprocessing_start = time.time()
             self.icon.icon = self.create_image("yellow")
-            normalized_path = self.audio_path.replace(".wav", "_norm.opus")
             self.log(f"Normalizuji hlasitost přes ffmpeg do {normalized_path} ...")
             
             # Tento příkaz vytáhne hlasitost tak, aby špička byla na 0dB
             # ffmpeg -y -i voice_input_4449.wav -af loudnorm=I=-16:TP=-1.5:LRA=11 -c:a libopus -b:a 32k out.opus
-            subprocess.run([
+            ffmpeg_result = subprocess.run([
                 "ffmpeg", "-y", "-i", self.audio_path, 
                 "-af", "loudnorm=I=-16:TP=-1.5:LRA=11", 
                 "-ar", "16000", "-c:a", "libopus", "-b:a", "32k", 
@@ -247,6 +258,7 @@ class VoiceAppTray:
         except Exception as e:
             self.log(f"CHYBA v externím procesu: {e}")
         finally:
+            self.last_corrected_text = text_to_paste
             self.icon.icon = self.create_image("blue")
 
     def open_logs(self):
@@ -304,7 +316,8 @@ class VoiceAppTray:
         
         self.log("Aplikace spuštěna. Ikonka je v systray.")
         self.log("Stiskni 2x klávesu CTRL pro start/stop nahrávání.")
-        
+        self.log(f"Maximální délka nahrávání: {MAX_RECORDING_SECONDS}s.")
+
         # Spuštění ikonky (zablokuje hlavní vlákno)
         self.icon.run()
 
