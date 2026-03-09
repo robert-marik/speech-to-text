@@ -4,7 +4,7 @@
 
 Program pro konverzi mluveného slova na text. 
 
-Program čeká na dvojí stisknutí klávesy Ctrl a poté nahraje vstup z mikrofonu (ukončeno dvojím stisknutím klávesy Ctrl), odešle na rozpoznávání mluvené řeči a na místo kurzoru do libovolné aplikace vloží rozpoznaný text. Během nahrávání se pauznou přehrávače hudby.
+Program čeká na dvojí stisknutí klávesy Ctrl a poté nahraje vstup z mikrofonu (ukončeno dvojím stisknutím klávesy Ctrl), odešle na rozpoznávání mluvené řeči a na místo kurzoru do libovolné aplikace vloží rozpoznaný text. Během nahrávání se zastaví přehrávač hudby.
 
 ## Instalace
 
@@ -14,9 +14,18 @@ Nainstalujte potřebné knihovny podle vašeho manažera prostředí, napříkla
 mamba install --file requirements.txt
 ```
 
+Pokud chcete ovládat přehrávač hudby, nainstalujte i příslušný program.
+
+```
+sudo apt-get install playerctl
+```
+
+Pokus s nahráváním zvuku, jak to bude se hlasitostí,Pokus s zahráváním zvuků, jak to bude s hlasitostí a tak vůbec, bude muset být proveden.
+
+
 ## Spuštění
 
-Je potřeba nainstalovat závislosti a potom spustit následující příkaz. Předpokládá se, že v souboru `api.txt` je přislušný api klíč.
+Je potřeba nainstalovat závislosti a potom spustit následující příkaz. Předpokládá se, že v souboru `api.txt` je příslušný api klíč.
 
 ```
 export GROQ_API_KEY=`cat api.txt`; python voice_to_text.py
@@ -32,4 +41,5 @@ export GROQ_API_KEY=`cat api.txt`; python voice_to_text.py
 * https://github.com/ideasman42/nerd-dictation
 * https://github.com/papoteur-mga/elograf
 * https://github.com/diogovalada/whisper-writer
-* https://vocalinux.com/
+* https://vocalinux.com/ (vyžaduje `sudo apt install libgirepository-2.0-dev`)
+

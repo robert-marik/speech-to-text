@@ -22,7 +22,7 @@ class VoiceAppTray:
         self.audio_data = []
         self.last_ctrl_time = 0
         self.language = "cs"
-        self.fs = 16000  # Výchozí frekvence 16kHz pro rychlost
+        self.fs = 44100  # Výchozí frekvence 44.1kHz pro kvalitu
         self.use_correction = True  # Oprava pravopisu zapnuta v základu
         self.icon = None
         self.running = True
@@ -42,8 +42,6 @@ class VoiceAppTray:
         self.last_corrected_text = ""
         # Pro sledování stavu hudby
         self.was_playing = False
-        # Výchozí metoda záznamu - můžete přepínat mezi 'sounddevice' a 'soundcard'
-        self.record_method = 'sounddevice'
 
     def log(self, message):
         """Vypíše zprávu do terminálu a uloží ji do logu s časovou značkou."""
@@ -58,13 +56,6 @@ class VoiceAppTray:
             self.fs = rate
             self.log(f"Vzorkovací frekvence změněna na {rate} Hz")
         return inner        
-
-    def set_record_method(self, method):
-        def inner():
-            self.record_method = method
-            self.log(f"Metoda záznamu zvuku změněna na {method}.")
-        return inner        
-
 
     def toggle_correction(self):
         self.use_correction = not self.use_correction
@@ -156,108 +147,75 @@ class VoiceAppTray:
         except Exception as e:
             self.log(f"CHYBA při vkládání: {e}")
 
-    def record_with_sounddevice(self):
-        """Záznam přes sounddevice (mikrofon)."""
-        import sounddevice as sd
-        self.log("Zahajuji záznam přes sounddevice...")
-        self.audio_data = []
-        with sd.InputStream(samplerate=self.fs, channels=1, callback=self._audio_callback):
+    def record_and_process(self):
+        """Vlákno, které teď jen čeká na externí procesy."""
+        try:
+            # 1. Zvuková signalizace startu
+            subprocess.run(["aplay", "-q", "start.wav"], stderr=subprocess.DEVNULL)
+            
+            # 2. Spuštění EXTERNÍHO nahrávání přes arecord
+            # -D default (nebo 'pulse'), -f S16_LE (formát), -c 1 (mono)
+            cmd = ["arecord", "-f", "S16_LE", "-r", str(self.fs), "-c", "1", self.audio_path]
+            self.recording_process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self.log(f"Externí nahrávání spuštěno (PID: {self.recording_process.pid})")
+
+            # Čekáme, dokud uživatel nahrávání nevypne (recording = False)
             while self.recording:
                 time.sleep(0.1)
-        return np.concatenate(self.audio_data, axis=0)
 
-    def _audio_callback(self, indata, frames, time_info, status):
-        """Callback funkce pro sounddevice, která ukládá nahraná data."""
-        if self.recording:
-            self.audio_data.append(indata.copy())
+            # 3. UKONČENÍ nahrávání
+            if self.recording_process:
+                self.recording_process.terminate() # Pošle SIGTERM, arecord korektně zavře soubor
+                self.recording_process.wait()
+                self.log("Nahrávání ukončeno externím procesem.")
 
-    def record_with_soundcard(self):
-        """Záznam přes knihovnu soundcard (vhodné pro loopback/systémový zvuk)."""
-        import soundcard as sc
-        # Zde definujete mikrofon nebo loopback zařízení
-        mic = sc.default_microphone()
-        self.log(f"Zahajuji záznam přes soundcard a mikrofon {mic.name}...")
-        frame_size = self.fs // 50
-        with mic.recorder(samplerate=self.fs) as recorder:
-            while self.recording:
-                data = recorder.record(numframes=frame_size)
-                self.audio_data.append(data)
-        return np.concatenate(self.audio_data, axis=0)
+            # Zvuková signalizace konce
+            subprocess.run(["aplay", "-q", "stop.wav"], stderr=subprocess.DEVNULL)
 
-    def perform_recording(self):
-        if self.record_method == 'sounddevice':
-            return self.record_with_sounddevice()
-        else:
-            return self.record_with_soundcard()
+            # 4. EXTERNÍ NORMALIZACE (Zesílení) přes ffmpeg
+            postprocessing_start = time.time()
+            self.icon.icon = self.create_image("yellow")
+            normalized_path = self.audio_path.replace(".wav", "_norm.wav")
+            self.log(f"Normalizuji hlasitost přes ffmpeg do {normalized_path} ...")
+            
+            # Tento příkaz vytáhne hlasitost tak, aby špička byla na 0dB
+            subprocess.run([
+                "ffmpeg", "-y", "-i", self.audio_path, 
+                "-af", "loudnorm=I=-16:TP=-1.5:LRA=11", 
+                normalized_path
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self.log(f"Normalizace dokončena za {time.time() - postprocessing_start:.2f} sekund.")
 
-    def save_audio(self, raw_data, filename):
-        """
-        Sjednotí různá datová pole a uloží je jako WAV.
-        raw_data: List nebo numpy pole z nahrávání.
-        """
-        # 1. Převedení na numpy pole (pokud to ještě není)
-        audio_array = np.concatenate(raw_data, axis=0) if isinstance(raw_data, list) else raw_data
-        
-        # 2. Normalizace (pokud soundcard vrací float mimo rozsah)
-        # Soundcard obvykle vrací float v rozsahu [-1, 1], což wav.write (float) akceptuje.
-        # Pokud chcete jistotu, převedeme na int16, což je nejkompatibilnější formát:
-        
-        if audio_array.dtype != np.int16:
-            # Převedení na int16 (standard pro 16bitové WAV)
-            # Předpokládáme, že vstupní data jsou float v rozsahu [-1, 1]
-            audio_array = (audio_array * 32767).astype(np.int16)
-
-        # 3. Zápis
-        wav.write(filename, self.fs, audio_array)
-        self.log(f"Audio uloženo do {filename} ve formátu {audio_array.dtype}")
-
-    def record_and_process(self):
-        """Pracovní vlákno pro záznam a AI zpracování."""
-        self.audio_data = []
-        try:
-            # Nahrávání
-            subprocess.run(["aplay", "-q", "start.wav"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            try:
-                self.perform_recording()                        
-            except Exception as e:
-                self.log(f"CHYBA v procesu: {e}")
-            subprocess.run(["aplay", "-q", "stop.wav"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-            if self.audio_data:
-                # Změna ikonky na "zpracovávám" (žlutá)
-                self.icon.icon = self.create_image("yellow")
-                self.log("Zpracovávám zvuk přes Groq AI...")
-                
-                # Uložení do WAV
-                self.save_audio(self.audio_data, self.audio_path)
-                
-                # Groq Whisper API
-                with open(self.audio_path, "rb") as file:
+            # 5. Odeslání do Groq (použijeme ten normalizovaný soubor)
+            if os.path.exists(normalized_path):
+                groq_start = time.time()            
+                with open(normalized_path, "rb") as file:
                     transcription = client.audio.transcriptions.create(
-                        file=(self.audio_path, file.read()),
+                        file=(normalized_path, file.read()),
                         model="whisper-large-v3-turbo",
                         language=self.language,
                         response_format="text"
                     )
-                
-                self.last_raw_text = transcription.strip()
-                self.log(f"Získán přepis: {self.last_raw_text}")
-                self.last_corrected_text = "" # Reset
+                self.log(f"Transkripce dokončena za {time.time() - groq_start:.2f} sekund.")
 
+                self.last_raw_text = transcription.strip()
+                self.log(f"Původní přepis: {self.last_raw_text}")
                 if self.last_raw_text:
                     text_to_paste = self.last_raw_text
-                    # 2. KROK: Volitelná korekce (Llama)
                     if self.use_correction:
-                        self.last_corrected_text = self.correct_text(self.last_raw_text)
-                        text_to_paste = self.last_corrected_text
-                        self.log(f"Finální text po korektuře: {self.last_corrected_text}")                    
+                        correction_start = time.time()
+                        text_to_paste = self.correct_text(self.last_raw_text)
+                        self.log(f"Korekce dokončena za {time.time() - correction_start:.2f} sekund.")
                     self.robust_paste(text_to_paste)
-                else:
-                    self.log("AI nevrátila žádný text (ticho?).")
+                self.last_corrected_text = text_to_paste
+                
+                # Úklid
+                # os.remove(normalized_path)
+            
         except Exception as e:
-            self.log(f"CHYBA v procesu: {e}")
+            self.log(f"CHYBA v externím procesu: {e}")
         finally:
-            self.icon.icon = self.create_image("blue") # Zpět do klidu
+            self.icon.icon = self.create_image("blue")
 
     def open_logs(self):
         """Otevře systémový log v editoru."""
@@ -271,21 +229,17 @@ class VoiceAppTray:
         subprocess.run(["xdg-open", self.report_path])            
 
     def on_press(self, key):
-        """Detekce dvojitého stisku CTRL."""
+        """Upravená detekce CTRL - jen přepíná vlajku self.recording."""
         if key == keyboard.Key.ctrl:
             now = time.time()
             if now - self.last_ctrl_time < 0.4:
                 if not self.recording:
-                    self.log("START nahrávání...")
                     self.recording = True
                     self.icon.icon = self.create_image("red")
                     self.was_playing = self.toggle_music(pause=True)
                     threading.Thread(target=self.record_and_process).start()
                 else:
-                    self.log("STOP nahrávání...")
-                    self.recording = False
-                    if self.was_playing:
-                        self.toggle_music(pause=False)
+                    self.recording = False # To zastaví arecord ve vlákně výše
             self.last_ctrl_time = now
 
     def run(self):
@@ -300,10 +254,6 @@ class VoiceAppTray:
             pystray.Menu.SEPARATOR,
             item('Kvalita: 16kHz (Rychlejší)', self.set_sample_rate(16000), checked=lambda item: self.fs == 16000),
             item('Kvalita: 44.1kHz (Věrnější)', self.set_sample_rate(44100), checked=lambda item: self.fs == 44100),
-            pystray.Menu.SEPARATOR,
-            item('Metoda záznamu', lambda: None, enabled=False),
-            item('sounddevice', self.set_record_method('sounddevice'), checked=lambda item: self.record_method == 'sounddevice'),
-            item('soundcard', self.set_record_method('soundcard'), checked=lambda item: self.record_method == 'soundcard'),
             pystray.Menu.SEPARATOR,
             item('Zobrazit poslední texty', self.show_last_texts),
             item('Otevřít logy', self.open_logs),            
