@@ -5,7 +5,7 @@ pystray
 Pillow
 pygobject
 python-sounddevice
-pyinput
+pynput
 pygobject 
 gtk3
 pysoundcard
