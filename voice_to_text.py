@@ -198,16 +198,19 @@ class VoiceAppTray:
             # 4. EXTERNÍ NORMALIZACE (Zesílení) přes ffmpeg
             postprocessing_start = time.time()
             self.icon.icon = self.create_image("yellow")
-            normalized_path = self.audio_path.replace(".wav", "_norm.wav")
+            normalized_path = self.audio_path.replace(".wav", "_norm.opus")
             self.log(f"Normalizuji hlasitost přes ffmpeg do {normalized_path} ...")
             
             # Tento příkaz vytáhne hlasitost tak, aby špička byla na 0dB
+            # ffmpeg -y -i voice_input_4449.wav -af loudnorm=I=-16:TP=-1.5:LRA=11 -c:a libopus -b:a 32k out.opus
             subprocess.run([
                 "ffmpeg", "-y", "-i", self.audio_path, 
                 "-af", "loudnorm=I=-16:TP=-1.5:LRA=11", 
+                "-ar", "16000", "-c:a", "libopus", "-b:a", "32k", 
                 normalized_path
             ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             self.log(f"Normalizace dokončena za {time.time() - postprocessing_start:.2f} sekund.")
+            self.log(f"Velikost původního souboru: {os.path.getsize(self.audio_path) / 1024:.2f} KB, normalizovaného souboru: {os.path.getsize(normalized_path) / 1024:.2f} KB")
 
             # 5. Odeslání do Groq (použijeme ten normalizovaný soubor)
             if os.path.exists(normalized_path):
