@@ -20,7 +20,7 @@ pip install -e .
 export GROQ_API_KEY="váš_klíč"
 ```
 
-### Fix pro systra
+### Fix pro systray
 
 ```bash
 export PYSTRAY_BACKEND='gtk'
