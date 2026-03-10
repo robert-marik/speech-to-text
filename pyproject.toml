@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "voice-to-text"
+version = "1.0.0"
+description = "Hlasový přepis s AI korekcí – systray applet pro Linux"
+requires-python = ">=3.11"
+dependencies = [
+    "groq",
+    "numpy",
+    "scipy",
+    "Pillow",
+    "pystray",
+    "pynput",
+]
+
+[project.scripts]
+voice-to-text = "voice_to_text.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]

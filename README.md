@@ -1,47 +1,58 @@
-# speech-to-text
+# Voice to Text
 
-## Popis
+Systray applet pro Linux, který nahrává hlas, přepisuje ho přes Whisper (Groq API)
+a volitelně opravuje pravopis nebo překládá do angličtiny pomocí LLM.
 
-Program pro konverzi mluveného slova na text. Volitelně je možný překlad do
-angličtiny, nebo korektury textu.
+## Požadavky
 
-Program čeká na dvojí stisknutí klávesy Ctrl a poté nahraje vstup z mikrofonu
-(ukončeno dvojím stisknutím klávesy Ctrl), odešle na rozpoznávání mluvené řeči a
-na místo kurzoru do libovolné aplikace vloží rozpoznaný text. Během nahrávání se
-zastaví přehrávač hudby.
-
-## Instalace
-
-Nainstalujte potřebné knihovny podle vašeho manažera prostředí, například takto.
-
-```
-mamba install --file requirements.txt
+### Systémové nástroje
+```bash
+sudo apt install alsa-utils ffmpeg xclip xdotool playerctl
 ```
 
-Pro ovládání přehrávače, a nahrávání a přehrávání textů nainstalujte následující programy.
-
+### Python závislosti
+```bash
+pip install -e .
 ```
-sudo apt-get install playerctl ffmpeg aplay arecord xclip xdotool
+
+### API klíč
+```bash
+export GROQ_API_KEY="váš_klíč"
 ```
 
+### Fix pro systra
+
+```bash
+export PYSTRAY_BACKEND='gtk'
+```
 
 ## Spuštění
-
-Je potřeba nainstalovat závislosti a potom spustit následující příkaz. Předpokládá se, že v souboru `api.txt` je příslušný api klíč.
-
+```bash
+python main.py
 ```
-export GROQ_API_KEY=`cat api.txt`; python voice_to_text.py
+nebo
+```bash 
+python -m voice_to_text
 ```
 
-## Related stuff
+## Ovládání
+- **2× Ctrl** – zahájí / ukončí nahrávání
+- Pravým kliknutím na ikonu v systray se otevře menu
 
-* https://jan.fertek.cz/2025/speech-to-text-aneb-jak-na-linuxu-diktovat-do-libovolne-aplikace/#postup-instalace
-* https://www.reddit.com/r/LocalLLaMA/comments/1nc7bxw/fast_local_pushtotalk_speechtotext_dictation_tool/?tl=cs
-* https://github.com/lxe/yapyap
-* https://github.com/openconcerto/MisterWhisper
-* https://gist.github.com/victorb/5ab57b42f8f75fccefb213bafbe69d10
-* https://github.com/ideasman42/nerd-dictation
-* https://github.com/papoteur-mga/elograf
-* https://github.com/diogovalada/whisper-writer
-* https://vocalinux.com/ (vyžaduje `sudo apt install libgirepository-2.0-dev`)
-
+## Struktura projektu
+```
+voice_to_text/
+├── main.py                  # Vstupní bod
+├── pyproject.toml
+├── README.md
+└── voice_to_text/
+    ├── __init__.py
+    ├── __main__.py          # python -m voice_to_text
+    ├── config.py            # Konstanty a konfigurace
+    ├── logger.py            # Logování
+    ├── audio.py             # Nahrávání a normalizace
+    ├── transcriber.py       # Přepis, korekce, překlad (Groq)
+    ├── clipboard.py         # Vkládání textu (xclip + xdotool)
+    ├── music.py             # Ovládání přehrávače (playerctl)
+    └── tray.py              # Systray ikona, menu, hlavní logika
+```
